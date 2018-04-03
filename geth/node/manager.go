@@ -114,10 +114,14 @@ func (m *Manager) startNode(config *params.NodeConfig) error {
 		}
 		m.db = statusDB
 		m.register = peers.NewRegister(m.config.RegisterTopics...)
+		// TODO(dshulyak) consider adding a flag to define this behaviour
+		stopOnMax := len(m.config.RegisterTopics) == 0
 		m.peerPool = peers.NewPeerPool(m.config.RequireTopics,
 			peers.DefaultFastSync,
 			peers.DefaultSlowSync,
-			peers.NewCache(m.db))
+			peers.NewCache(m.db),
+			stopOnMax,
+		)
 		if err := m.register.Start(ethNode.Server()); err != nil {
 			return err
 		}

@@ -81,7 +81,7 @@ func (s *PeerPoolSimulationSuite) TestSingleTopicDiscovery() {
 	config := map[discv5.Topic]params.Limits{
 		topic: {expectedConnections, expectedConnections},
 	}
-	peerPool := NewPeerPool(config, 100*time.Millisecond, 100*time.Millisecond, nil)
+	peerPool := NewPeerPool(config, 100*time.Millisecond, 100*time.Millisecond, nil, false)
 	register := NewRegister(topic)
 	s.Require().NoError(register.Start(s.peers[0]))
 	defer register.Stop()

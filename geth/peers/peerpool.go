@@ -29,12 +29,13 @@ const (
 )
 
 // NewPeerPool creates instance of PeerPool
-func NewPeerPool(config map[discv5.Topic]params.Limits, fastSync, slowSync time.Duration, cache *Cache) *PeerPool {
+func NewPeerPool(config map[discv5.Topic]params.Limits, fastSync, slowSync time.Duration, cache *Cache, stopOnMax bool) *PeerPool {
 	return &PeerPool{
-		config:   config,
-		fastSync: fastSync,
-		slowSync: slowSync,
-		cache:    cache,
+		config:    config,
+		fastSync:  fastSync,
+		slowSync:  slowSync,
+		cache:     cache,
+		stopOnMax: stopOnMax,
 	}
 }
 
@@ -50,10 +51,11 @@ type peerInfo struct {
 // PeerPool manages discovered peers and connects them to p2p server
 type PeerPool struct {
 	// config can be set only once per pool life cycle
-	config   map[discv5.Topic]params.Limits
-	fastSync time.Duration
-	slowSync time.Duration
-	cache    *Cache
+	config    map[discv5.Topic]params.Limits
+	fastSync  time.Duration
+	slowSync  time.Duration
+	cache     *Cache
+	stopOnMax bool
 
 	mu                 sync.RWMutex
 	topics             []*TopicPool
@@ -109,12 +111,13 @@ func (p *PeerPool) handleServerPeers(server *p2p.Server, events <-chan *p2p.Peer
 				total := 0
 				for _, t := range p.topics {
 					t.ConfirmAdded(server, event.Peer)
-					if t.MaxReached() {
+					if p.stopOnMax && t.MaxReached() {
 						total++
 						t.StopSearch()
 					}
 				}
-				if total == len(p.config) {
+				if p.stopOnMax && total == len(p.config) {
+					log.Debug("closing discv5 connection")
 					server.DiscV5.Close()
 				}
 				p.mu.Unlock()
