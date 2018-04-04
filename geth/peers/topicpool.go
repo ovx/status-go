@@ -2,6 +2,7 @@ package peers
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common/mclock"
@@ -30,15 +31,22 @@ type TopicPool struct {
 	slowSync time.Duration
 	fastSync time.Duration
 
-	quit chan struct{}
+	quit    chan struct{}
+	running int32
 
-	mu        sync.RWMutex
-	wg        sync.WaitGroup
-	connected int
-	peers     map[discv5.NodeID]*peerInfo
-	period    chan time.Duration
+	mu         sync.RWMutex
+	discvWG    sync.WaitGroup
+	consumerWG sync.WaitGroup
+	connected  int
+	peers      map[discv5.NodeID]*peerInfo
+	period     chan time.Duration
 
 	cache *Cache
+}
+
+// SearchRunning returns true if search is running
+func (t *TopicPool) SearchRunning() bool {
+	return atomic.LoadInt32(&t.running) == 1
 }
 
 // MaxReached returns true if we connected with max number of peers.
@@ -75,7 +83,7 @@ func (t *TopicPool) ConfirmAdded(server *p2p.Server, nodeID discover.NodeID) {
 		peer.connected = true
 		t.connected++
 	}
-	if t.connected == t.limits[0] {
+	if t.SearchRunning() && t.connected == t.limits[0] {
 		t.period <- t.slowSync
 	}
 	return
@@ -95,7 +103,7 @@ func (t *TopicPool) ConfirmDropped(server *p2p.Server, nodeID discover.NodeID, r
 	if reason == p2p.DiscRequested.Error() {
 		return false
 	}
-	if t.connected == t.limits[0] {
+	if t.SearchRunning() && t.connected == t.limits[0] {
 		t.period <- t.fastSync
 	}
 	t.connected--
@@ -118,11 +126,16 @@ func (t *TopicPool) ConfirmDropped(server *p2p.Server, nodeID discover.NodeID, r
 
 // StartSearch creates discv5 queries and runs a loop to consume found peers.
 func (t *TopicPool) StartSearch(server *p2p.Server) error {
+	if atomic.LoadInt32(&t.running) == 1 {
+		return nil
+	}
 	if server.DiscV5 == nil {
 		return ErrDiscv5NotRunning
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	atomic.StoreInt32(&t.running, 1)
+	t.quit = make(chan struct{})
 	t.period = make(chan time.Duration, 2)
 	found := make(chan *discv5.Node, 10)
 	lookup := make(chan bool, 100)
@@ -132,14 +145,15 @@ func (t *TopicPool) StartSearch(server *p2p.Server) error {
 			found <- peer
 		}
 	}
-	t.wg.Add(2)
+	t.discvWG.Add(1)
 	go func() {
 		server.DiscV5.SearchTopic(t.topic, t.period, found, lookup)
-		t.wg.Done()
+		t.discvWG.Done()
 	}()
+	t.consumerWG.Add(1)
 	go func() {
 		t.handleFoundPeers(server, found, lookup)
-		t.wg.Done()
+		t.consumerWG.Done()
 	}()
 	return nil
 }
@@ -213,6 +227,8 @@ func (t *TopicPool) StopSearch() {
 		log.Debug("stoping search", "topic", t.topic)
 		close(t.quit)
 	}
+	t.consumerWG.Wait()
+	atomic.StoreInt32(&t.running, 0)
 	close(t.period)
-	t.wg.Wait()
+	t.discvWG.Wait()
 }

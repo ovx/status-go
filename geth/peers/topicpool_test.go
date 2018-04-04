@@ -41,6 +41,7 @@ func (s *TopicPoolSuite) SetupTest() {
 	limits := params.Limits{1, 2}
 	s.topicPool = NewTopicPool(topic, limits, 100*time.Millisecond, 200*time.Millisecond)
 	s.topicPool.period = make(chan time.Duration, 2)
+	s.topicPool.running = 1
 }
 
 func (s *TopicPoolSuite) TearDown() {
